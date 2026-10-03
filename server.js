@@ -1,6 +1,6 @@
 import express from "express";
-import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import bcrypt from "bcryptjs";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import crypto from "crypto";
@@ -8,369 +8,155 @@ import path from "path";
 import pg from "pg";
 
 const { Pool } = pg;
-
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
-
 const ADMIN_USER = process.env.ADMIN_USER || "admin";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "CHANGE_ME";
 const JWT_SECRET = process.env.JWT_SECRET || "CHANGE_ME";
 const DATABASE_URL = process.env.DATABASE_URL;
+const PUBLIC_KEY_DURATION_DAYS = Number(process.env.PUBLIC_KEY_DURATION_DAYS ?? 0);
 
-if (!DATABASE_URL) {
-  console.error("ERRO: DATABASE_URL não configurado.");
-  process.exit(1);
-}
+if (!DATABASE_URL) { console.error("ERRO: DATABASE_URL não configurado."); process.exit(1); }
+if (![0,1,7,30,90,365].includes(PUBLIC_KEY_DURATION_DAYS)) { console.error("ERRO: PUBLIC_KEY_DURATION_DAYS inválido."); process.exit(1); }
 
-const db = new Pool({
-  connectionString: DATABASE_URL,
-  ssl: {
-    rejectUnauthorized: false
-  }
-});
+const db = new Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthorized: false } });
 
 async function iniciarBanco() {
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS keys (
-      id BIGSERIAL PRIMARY KEY,
-      key TEXT NOT NULL UNIQUE,
-      duration_days INTEGER NOT NULL,
-      created_at TIMESTAMPTZ NOT NULL,
-      expires_at TIMESTAMPTZ,
-      status TEXT NOT NULL DEFAULT 'active',
-      hwid TEXT,
-      last_used_at TIMESTAMPTZ
-    );
-  `);
-
+  await db.query(`CREATE TABLE IF NOT EXISTS keys (
+    id BIGSERIAL PRIMARY KEY, key TEXT NOT NULL UNIQUE, duration_days INTEGER NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL, expires_at TIMESTAMPTZ, status TEXT NOT NULL DEFAULT 'active',
+    hwid TEXT, last_used_at TIMESTAMPTZ
+  );`);
+  await db.query(`CREATE TABLE IF NOT EXISTS users (
+    id BIGSERIAL PRIMARY KEY,
+    username TEXT NOT NULL UNIQUE,
+    email TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    signup_ip TEXT NOT NULL UNIQUE,
+    key_id BIGINT NOT NULL UNIQUE REFERENCES keys(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );`);
   console.log("Banco PostgreSQL conectado.");
 }
 
 app.set("trust proxy", 1);
-
 app.use(helmet({ contentSecurityPolicy: false }));
-
-app.use((req, res, next) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader(
-    "Access-Control-Allow-Headers",
-    "Content-Type, Authorization"
-  );
-  res.setHeader(
-    "Access-Control-Allow-Methods",
-    "GET, POST, OPTIONS"
-  );
-
-  if (req.method === "OPTIONS") {
-    return res.sendStatus(204);
-  }
-
+app.use((req,res,next)=>{
+  res.setHeader("Access-Control-Allow-Origin","*");
+  res.setHeader("Access-Control-Allow-Headers","Content-Type, Authorization");
+  res.setHeader("Access-Control-Allow-Methods","GET, POST, OPTIONS");
+  if(req.method === "OPTIONS") return res.sendStatus(204);
   next();
 });
-
 app.use(express.json());
 app.use(express.static("public"));
+app.use("/api/", rateLimit({ windowMs: 60_000, limit: 120 }));
+const generateLimiter = rateLimit({ windowMs: 60_000, limit: 10 });
 
-const apiLimiter = rateLimit({
-  windowMs: 60_000,
-  limit: 120
-});
-
-app.use("/api/", apiLimiter);
-
-function makeKey() {
-  const chars = "0123456789ABCDEF";
-
-  const randomPart = (length) =>
-    Array.from(
-      { length },
-      () => chars[crypto.randomInt(0, chars.length)]
-    ).join("");
-
-  return `RBX-${randomPart(4)}-${randomPart(3)}`;
+function makeKey(){
+  const chars="0123456789ABCDEF";
+  const part=n=>Array.from({length:n},()=>chars[crypto.randomInt(0,chars.length)]).join("");
+  return `RBX-${part(4)}-${part(3)}`;
+}
+function adminAuth(req,res,next){
+  const token=(req.headers.authorization||"").replace(/^Bearer\s+/i,"");
+  try { req.admin=jwt.verify(token,JWT_SECRET); next(); }
+  catch { res.status(401).json({error:"Não autorizado"}); }
 }
 
-function adminAuth(req, res, next) {
-  const token = (req.headers.authorization || "")
-    .replace(/^Bearer\s+/i, "");
+app.post("/api/admin/login", async (req,res)=>{
+  const {username,password}=req.body||{};
+  if(username!==ADMIN_USER || password!==ADMIN_PASSWORD) return res.status(401).json({error:"Usuário ou senha inválidos"});
+  res.json({token:jwt.sign({sub:ADMIN_USER},JWT_SECRET,{expiresIn:"8h"})});
+});
 
+app.post("/api/admin/keys", adminAuth, async (req,res)=>{
   try {
-    req.admin = jwt.verify(token, JWT_SECRET);
-    next();
-  } catch {
-    res.status(401).json({
-      error: "Não autorizado"
-    });
-  }
+    const days=Number(req.body?.duration_days);
+    if(![1,7,30,90,365,0].includes(days)) return res.status(400).json({error:"duration_days deve ser 1, 7, 30, 90, 365 ou 0 (vitalícia)"});
+    let key; while(true){ key=makeKey(); const x=await db.query("SELECT 1 FROM keys WHERE key=$1",[key]); if(!x.rowCount) break; }
+    const now=new Date(); const expires=days===0?null:new Date(now.getTime()+days*86400000);
+    await db.query(`INSERT INTO keys (key,duration_days,created_at,expires_at,status) VALUES ($1,$2,$3,$4,'active')`,[key,days,now,expires]);
+    res.json({key,duration_days:days,expires_at:expires?expires.toISOString():null,status:"active"});
+  } catch(e){ console.error("Erro criando key:",e); res.status(500).json({error:"Erro ao criar key"}); }
+});
+
+app.get("/api/admin/keys", adminAuth, async (req,res)=>{
+  try { const r=await db.query(`SELECT id,key,duration_days,created_at,expires_at,status,hwid,last_used_at FROM keys ORDER BY id DESC`); res.json(r.rows); }
+  catch(e){ console.error("Erro listando keys:",e); res.status(500).json({error:"Erro ao listar keys"}); }
+});
+
+app.post("/api/admin/keys/:id/revoke", adminAuth, async (req,res)=>{
+  try { const r=await db.query(`UPDATE keys SET status='revoked' WHERE id=$1 RETURNING id`,[req.params.id]); if(!r.rowCount)return res.status(404).json({error:"Key não encontrada"}); res.json({ok:true}); }
+  catch(e){ console.error("Erro revogando key:",e); res.status(500).json({error:"Erro ao revogar key"}); }
+});
+
+// Público: cadastro cria uma conta e uma única key. O mesmo IP não cria outra conta.
+function clientIp(req){
+  return String(req.ip || req.socket?.remoteAddress || "").replace(/^::ffff:/, "");
 }
 
-app.post("/api/admin/login", async (req, res) => {
-  const { username, password } = req.body || {};
-
-  if (
-    username !== ADMIN_USER ||
-    password !== ADMIN_PASSWORD
-  ) {
-    return res.status(401).json({
-      error: "Usuário ou senha inválidos"
-    });
-  }
-
-  const token = jwt.sign(
-    { sub: ADMIN_USER },
-    JWT_SECRET,
-    { expiresIn: "8h" }
-  );
-
-  res.json({ token });
-});
-
-app.post("/api/admin/keys", adminAuth, async (req, res) => {
+app.post("/api/register", generateLimiter, async (req,res)=>{
+  const username=String(req.body?.username||"").trim();
+  const email=String(req.body?.email||"").trim().toLowerCase();
+  const password=String(req.body?.password||"");
+  const ip=clientIp(req);
+  if(!/^[A-Za-z0-9_.-]{3,24}$/.test(username)) return res.status(400).json({ok:false,error:"Usuário deve ter de 3 a 24 caracteres."});
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ok:false,error:"E-mail inválido."});
+  if(password.length<6) return res.status(400).json({ok:false,error:"A senha deve ter pelo menos 6 caracteres."});
+  const client=await db.connect();
   try {
-    const days = Number(req.body?.duration_days);
-
-    if (![1, 7, 30, 90, 365, 0].includes(days)) {
-      return res.status(400).json({
-        error:
-          "duration_days deve ser 1, 7, 30, 90, 365 ou 0 (vitalícia)"
-      });
-    }
-
-    let key;
-
-    while (true) {
-      key = makeKey();
-
-      const existe = await db.query(
-        "SELECT 1 FROM keys WHERE key = $1",
-        [key]
-      );
-
-      if (existe.rowCount === 0) break;
-    }
-
-    const now = new Date();
-
-    const expires =
-      days === 0
-        ? null
-        : new Date(
-            now.getTime() + days * 86400000
-          );
-
-    await db.query(
-      `
-      INSERT INTO keys
-      (key, duration_days, created_at, expires_at, status)
-      VALUES ($1, $2, $3, $4, 'active')
-      `,
-      [key, days, now, expires]
-    );
-
-    res.json({
-      key,
-      duration_days: days,
-      expires_at: expires
-        ? expires.toISOString()
-        : null,
-      status: "active"
-    });
-  } catch (error) {
-    console.error("Erro criando key:", error);
-
-    res.status(500).json({
-      error: "Erro ao criar key"
-    });
-  }
+    const blocked=await client.query("SELECT 1 FROM users WHERE signup_ip=$1",[ip]);
+    if(blocked.rowCount) return res.status(409).json({ok:false,error:"Este acesso já possui uma conta. Entre na conta existente."});
+    const dup=await client.query("SELECT 1 FROM users WHERE lower(username)=lower($1) OR email=$2",[username,email]);
+    if(dup.rowCount) return res.status(409).json({ok:false,error:"Usuário ou e-mail já cadastrado."});
+    let key; while(true){key=makeKey(); const x=await client.query("SELECT 1 FROM keys WHERE key=$1",[key]); if(!x.rowCount)break;}
+    const now=new Date(), days=PUBLIC_KEY_DURATION_DAYS;
+    const expires=days===0?null:new Date(now.getTime()+days*86400000);
+    const hash=await bcrypt.hash(password,12);
+    await client.query("BEGIN");
+    const kr=await client.query(`INSERT INTO keys (key,duration_days,created_at,expires_at,status) VALUES ($1,$2,$3,$4,'active') RETURNING id`,[key,days,now,expires]);
+    await client.query(`INSERT INTO users (username,email,password_hash,signup_ip,key_id,created_at) VALUES ($1,$2,$3,$4,$5,$6)`,[username,email,hash,ip,kr.rows[0].id,now]);
+    await client.query("COMMIT");
+    res.json({ok:true,key,username});
+  } catch(e){
+    try{await client.query("ROLLBACK")}catch{}
+    if(e.code==='23505') return res.status(409).json({ok:false,error:"Já existe uma conta para estes dados ou acesso."});
+    console.error("Erro cadastro:",e); res.status(500).json({ok:false,error:"Não foi possível criar a conta."});
+  } finally {client.release();}
 });
 
-app.get("/api/admin/keys", adminAuth, async (req, res) => {
+app.post("/api/client/login", generateLimiter, async (req,res)=>{
+  const login=String(req.body?.login||"").trim();
+  const password=String(req.body?.password||"");
   try {
-    const result = await db.query(`
-      SELECT
-        id,
-        key,
-        duration_days,
-        created_at,
-        expires_at,
-        status,
-        hwid,
-        last_used_at
-      FROM keys
-      ORDER BY id DESC
-    `);
-
-    res.json(result.rows);
-  } catch (error) {
-    console.error("Erro listando keys:", error);
-
-    res.status(500).json({
-      error: "Erro ao listar keys"
-    });
-  }
+    const r=await db.query(`SELECT u.username,u.password_hash,k.key,k.status,k.expires_at FROM users u JOIN keys k ON k.id=u.key_id WHERE lower(u.username)=lower($1) OR lower(u.email)=lower($1) LIMIT 1`,[login]);
+    if(!r.rowCount || !(await bcrypt.compare(password,r.rows[0].password_hash))) return res.status(401).json({ok:false,error:"Usuário/e-mail ou senha inválidos."});
+    const row=r.rows[0];
+    if(row.status==='revoked') return res.status(403).json({ok:false,error:"Sua key foi revogada."});
+    res.json({ok:true,username:row.username,key:row.key,expires_at:row.expires_at});
+  } catch(e){console.error("Erro login cliente:",e);res.status(500).json({ok:false,error:"Não foi possível entrar."});}
 });
 
-app.post(
-  "/api/admin/keys/:id/revoke",
-  adminAuth,
-  async (req, res) => {
-    try {
-      const result = await db.query(
-        `
-        UPDATE keys
-        SET status = 'revoked'
-        WHERE id = $1
-        RETURNING id
-        `,
-        [req.params.id]
-      );
-
-      if (result.rowCount === 0) {
-        return res.status(404).json({
-          error: "Key não encontrada"
-        });
-      }
-
-      res.json({ ok: true });
-    } catch (error) {
-      console.error("Erro revogando key:", error);
-
-      res.status(500).json({
-        error: "Erro ao revogar key"
-      });
-    }
-  }
-);
-
-app.post("/api/validate", async (req, res) => {
+app.post("/api/validate", async (req,res)=>{
   try {
-    const rawKey = String(
-      req.body?.key || ""
-    )
-      .trim()
-      .toUpperCase();
-
-    const hwid = String(
-      req.body?.hwid || ""
-    ).trim();
-
-    if (!rawKey || !hwid) {
-      return res.status(400).json({
-        valid: false,
-        error: "key e hwid são obrigatórios"
-      });
-    }
-
-    const result = await db.query(
-      "SELECT * FROM keys WHERE key = $1",
-      [rawKey]
-    );
-
-    if (result.rowCount === 0) {
-      return res.status(401).json({
-        valid: false,
-        error: "Key inválida"
-      });
-    }
-
-    const row = result.rows[0];
-
-    if (row.status === "revoked") {
-      return res.status(403).json({
-        valid: false,
-        error: "Key revogada"
-      });
-    }
-
-    if (
-      row.expires_at &&
-      new Date(row.expires_at) <= new Date()
-    ) {
-      await db.query(
-        `
-        UPDATE keys
-        SET status = 'expired'
-        WHERE id = $1
-        `,
-        [row.id]
-      );
-
-      return res.status(403).json({
-        valid: false,
-        error: "Key expirada"
-      });
-    }
-
-    if (row.hwid && row.hwid !== hwid) {
-      return res.status(403).json({
-        valid: false,
-        error:
-          "Key vinculada a outro dispositivo"
-      });
-    }
-
-    const now = new Date();
-
-    if (!row.hwid) {
-      await db.query(
-        `
-        UPDATE keys
-        SET hwid = $1,
-            last_used_at = $2
-        WHERE id = $3
-        `,
-        [hwid, now, row.id]
-      );
-    } else {
-      await db.query(
-        `
-        UPDATE keys
-        SET last_used_at = $1
-        WHERE id = $2
-        `,
-        [now, row.id]
-      );
-    }
-
-    res.json({
-      valid: true,
-      key: row.key,
-      expires_at: row.expires_at,
-      hwid_bound: true
-    });
-  } catch (error) {
-    console.error("Erro validando key:", error);
-
-    res.status(500).json({
-      valid: false,
-      error: "Erro interno do servidor"
-    });
-  }
+    const rawKey=String(req.body?.key||"").trim().toUpperCase(); const hwid=String(req.body?.hwid||"").trim().toUpperCase();
+    if(!rawKey||!hwid)return res.status(400).json({valid:false,error:"key e hwid são obrigatórios"});
+    const result=await db.query("SELECT * FROM keys WHERE key=$1",[rawKey]);
+    if(!result.rowCount)return res.status(401).json({valid:false,error:"Key inválida"});
+    const row=result.rows[0];
+    if(row.status==='revoked')return res.status(403).json({valid:false,error:"Key revogada"});
+    if(row.expires_at&&new Date(row.expires_at)<=new Date()){await db.query(`UPDATE keys SET status='expired' WHERE id=$1`,[row.id]);return res.status(403).json({valid:false,error:"Key expirada"});}
+    if(row.hwid&&row.hwid!==hwid)return res.status(403).json({valid:false,error:"Key vinculada a outro dispositivo"});
+    const now=new Date();
+    if(!row.hwid){
+      try { await db.query(`UPDATE keys SET hwid=$1,last_used_at=$2 WHERE id=$3`,[hwid,now,row.id]); }
+      catch(e){ if(e.code==='23505')return res.status(403).json({valid:false,error:"Este computador já possui outra key"}); throw e; }
+    } else await db.query(`UPDATE keys SET last_used_at=$1 WHERE id=$2`,[now,row.id]);
+    res.json({valid:true,key:row.key,expires_at:row.expires_at,hwid_bound:true});
+  } catch(e){ console.error("Erro validando key:",e); res.status(500).json({valid:false,error:"Erro interno do servidor"}); }
 });
 
-app.get(/.*/, (req, res) => {
-  res.sendFile(
-    path.resolve("public/index.html")
-  );
-});
-
-async function iniciarServidor() {
-  try {
-    await iniciarBanco();
-
-    app.listen(PORT, () => {
-      console.log(
-        `RBX Imperio Key Server em http://localhost:${PORT}`
-      );
-    });
-  } catch (error) {
-    console.error(
-      "ERRO AO CONECTAR NO BANCO:",
-      error
-    );
-
-    process.exit(1);
-  }
-}
-
+app.get(/.*/, (req,res)=>res.sendFile(path.resolve("public/index.html")));
+async function iniciarServidor(){try{await iniciarBanco();app.listen(PORT,()=>console.log(`RBX Imperio Key Server em http://localhost:${PORT}`));}catch(e){console.error("ERRO AO CONECTAR NO BANCO:",e);process.exit(1);}}
 iniciarServidor();
