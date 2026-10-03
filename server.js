@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS keys (
   last_used_at TEXT
 );
 `);
+app.set("trust proxy", 1);
 
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(express.json());
