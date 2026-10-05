@@ -385,7 +385,8 @@ app.post(
     const password = String(
       req.body?.password || ""
     );
-        const ip = clientIp(req);
+
+    const ip = clientIp(req);
 
     if (
       !/^[A-Za-z0-9_.-]{3,24}$/.test(
@@ -458,8 +459,7 @@ app.post(
             "Usuário ou e-mail já cadastrado."
         });
       }
-
-      let key;
+            let key;
 
       while (true) {
         key = makeKey();
@@ -821,6 +821,7 @@ app.post(
 // =====================================================
 // CHECKOUT PIX - MERCADO PAGO
 // =====================================================
+
 app.post(
   "/api/pix/criar",
   pixLimiter,
@@ -1120,8 +1121,7 @@ app.post(
     }
   }
 );
-
-// =====================================================
+          // =====================================================
 // CONSULTAR STATUS DO PIX
 // =====================================================
 
@@ -1274,6 +1274,7 @@ app.get(
     }
   }
 );
+
 // =====================================================
 // LIBERAÇÃO PÓS-PAGAMENTO
 // =====================================================
@@ -1446,6 +1447,198 @@ app.post(
 );
 
 // =====================================================
+// ACESSO À ÁREA DO CLIENTE PELO E-MAIL DA COMPRA
+// =====================================================
+
+app.post(
+  "/api/cliente/acesso",
+  generateLimiter,
+  async (req, res) => {
+    try {
+      const email = String(
+        req.body?.email || ""
+      )
+        .trim()
+        .toLowerCase();
+
+      if (
+        !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+      ) {
+        return res.status(400).json({
+          ok: false,
+          error: "Informe um e-mail válido."
+        });
+      }
+
+      const result = await db.query(
+        `
+        SELECT
+          external_reference,
+          plano,
+          valor,
+          email,
+          status,
+          created_at
+        FROM pix_orders
+        WHERE
+          lower(email)=lower($1)
+          AND lower(status) IN (
+            'approved',
+            'processed',
+            'paid'
+          )
+        ORDER BY created_at DESC
+        LIMIT 1
+        `,
+        [email]
+      );
+
+      if (!result.rowCount) {
+        return res.status(403).json({
+          ok: false,
+          error:
+            "Nenhuma compra aprovada encontrada para este e-mail."
+        });
+      }
+
+      const compra = result.rows[0];
+
+      const accessToken = jwt.sign(
+        {
+          type: "member_access",
+          ref: compra.external_reference,
+          plano: compra.plano,
+          email: compra.email
+        },
+        JWT_SECRET,
+        {
+          expiresIn: "24h"
+        }
+      );
+
+      return res.json({
+        ok: true,
+        plano: compra.plano,
+        access_token: accessToken
+      });
+
+    } catch (e) {
+      console.error(
+        "Erro no acesso por e-mail:",
+        e
+      );
+
+      return res.status(500).json({
+        ok: false,
+        error:
+          "Não foi possível verificar sua compra agora."
+      });
+    }
+  }
+);
+
+// =====================================================
+// VALIDAR ACESSO À ÁREA DO CLIENTE
+// =====================================================
+
+app.post(
+  "/api/cliente/validar-acesso",
+  generateLimiter,
+  async (req, res) => {
+    try {
+      const token = String(
+        req.body?.token || ""
+      ).trim();
+
+      if (!token) {
+        return res.status(401).json({
+          ok: false,
+          error: "Acesso não autorizado."
+        });
+      }
+
+      let payload;
+
+      try {
+        payload = jwt.verify(
+          token,
+          JWT_SECRET
+        );
+      } catch {
+        return res.status(401).json({
+          ok: false,
+          error:
+            "Seu acesso expirou. Informe seu e-mail novamente."
+        });
+      }
+
+      if (
+        !["member_access", "paid_access"].includes(
+          payload?.type
+        )
+      ) {
+        return res.status(401).json({
+          ok: false,
+          error: "Acesso inválido."
+        });
+      }
+
+      const result = await db.query(
+        `
+        SELECT
+          external_reference,
+          plano,
+          email,
+          status
+        FROM pix_orders
+        WHERE
+          external_reference=$1
+          AND lower(email)=lower($2)
+          AND lower(status) IN (
+            'approved',
+            'processed',
+            'paid'
+          )
+        LIMIT 1
+        `,
+        [
+          payload.ref,
+          payload.email
+        ]
+      );
+
+      if (!result.rowCount) {
+        return res.status(403).json({
+          ok: false,
+          error:
+            "Não foi encontrada uma compra aprovada para este acesso."
+        });
+      }
+
+      const compra = result.rows[0];
+
+      return res.json({
+        ok: true,
+        autorizado: true,
+        email: compra.email,
+        plano: compra.plano
+      });
+
+    } catch (e) {
+      console.error(
+        "Erro validando acesso do cliente:",
+        e
+      );
+
+      return res.status(500).json({
+        ok: false,
+        error:
+          "Não foi possível validar o acesso."
+      });
+    }
+  }
+);
+          // =====================================================
 // WEBHOOK MERCADO PAGO
 // =====================================================
 
