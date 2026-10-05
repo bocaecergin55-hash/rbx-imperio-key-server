@@ -22,6 +22,12 @@ const PUBLIC_KEY_DURATION_DAYS = Number(
 // Mercado Pago
 const MP_ACCESS_TOKEN = process.env.MP_ACCESS_TOKEN;
 
+// Área do cliente aberta somente depois da confirmação do pagamento.
+// Pode ser sobrescrita no Render com CLIENT_AREA_URL.
+const CLIENT_AREA_URL =
+  process.env.CLIENT_AREA_URL ||
+  "https://bocaecergin55-hash.github.io/Desbloqueador-steam/";
+
 if (!DATABASE_URL) {
   console.error("ERRO: DATABASE_URL não configurado.");
   process.exit(1);
@@ -67,7 +73,6 @@ async function iniciarBanco() {
     );
   `);
 
-  // Guarda os pedidos Pix criados pelo checkout
   await db.query(`
     CREATE TABLE IF NOT EXISTS pix_orders (
       id BIGSERIAL PRIMARY KEY,
@@ -143,8 +148,6 @@ const pixLimiter = rateLimit({
 // PLANOS DO CHECKOUT
 // =====================================================
 
-// O navegador envia apenas o código do plano.
-// O valor verdadeiro é definido aqui no servidor.
 const PLANOS = {
   start: {
     nome: "RBX Império Start",
@@ -290,10 +293,7 @@ app.post(
         status: "active"
       });
     } catch (e) {
-      console.error(
-        "Erro criando key:",
-        e
-      );
+      console.error("Erro criando key:", e);
 
       res.status(500).json({
         error: "Erro ao criar key"
@@ -323,10 +323,7 @@ app.get(
 
       res.json(r.rows);
     } catch (e) {
-      console.error(
-        "Erro listando keys:",
-        e
-      );
+      console.error("Erro listando keys:", e);
 
       res.status(500).json({
         error: "Erro ao listar keys"
@@ -358,10 +355,7 @@ app.post(
 
       res.json({ ok: true });
     } catch (e) {
-      console.error(
-        "Erro revogando key:",
-        e
-      );
+      console.error("Erro revogando key:", e);
 
       res.status(500).json({
         error: "Erro ao revogar key"
@@ -391,8 +385,7 @@ app.post(
     const password = String(
       req.body?.password || ""
     );
-
-    const ip = clientIp(req);
+        const ip = clientIp(req);
 
     if (
       !/^[A-Za-z0-9_.-]{3,24}$/.test(
@@ -828,7 +821,6 @@ app.post(
 // =====================================================
 // CHECKOUT PIX - MERCADO PAGO
 // =====================================================
-
 app.post(
   "/api/pix/criar",
   pixLimiter,
@@ -946,7 +938,6 @@ app.post(
                 type: "bank_transfer"
               },
 
-              // Pix válido por 30 minutos
               expiration_time: "PT30M"
             }
           ]
@@ -1012,13 +1003,6 @@ app.post(
         data?.transactions
           ?.payments?.[0] ||
         null;
-
-      /*
-       * A resposta pode variar conforme
-       * a versão/conta do Mercado Pago.
-       * Procuramos os campos do QR
-       * em alguns locais possíveis.
-       */
 
       const qrCode =
         payment?.payment_method
@@ -1290,102 +1274,69 @@ app.get(
     }
   }
 );
-
-
 // =====================================================
-// WEBHOOK MERCADO PAGO
+// LIBERAÇÃO PÓS-PAGAMENTO
 // =====================================================
-//
-// URL para cadastrar no Mercado Pago:
-// https://rbx-imperio-key-server.onrender.com/api/mercadopago/webhook
-//
-// A notificação NÃO aprova nada sozinha.
-// Quando ela chega, o servidor consulta a Order diretamente
-// no Mercado Pago usando o MP_ACCESS_TOKEN e atualiza o banco.
-//
 
 app.post(
-  "/api/mercadopago/webhook",
+  "/api/pix/liberar/:reference",
+  pixLimiter,
   async (req, res) => {
-    // Responde rapidamente ao Mercado Pago.
-    res.sendStatus(200);
-
     try {
+      const reference = String(
+        req.params.reference || ""
+      ).trim();
+
+      if (!/^[A-Za-z0-9_-]{1,100}$/.test(reference)) {
+        return res.status(400).json({
+          ok: false,
+          error: "Referência inválida."
+        });
+      }
+
       if (!MP_ACCESS_TOKEN) {
-        console.error("Webhook: MP_ACCESS_TOKEN não configurado.");
-        return;
+        return res.status(503).json({
+          ok: false,
+          error: "Confirmação de pagamento indisponível."
+        });
       }
 
-      const body = req.body || {};
-
-      // Dependendo do tipo/versão da notificação, o ID pode
-      // aparecer em locais diferentes.
-      const notifiedId = String(
-        body?.data?.id ||
-        body?.id ||
-        req.query?.["data.id"] ||
-        ""
-      ).trim();
-
-      // Primeiro tentamos achar o pedido pelo ID recebido.
-      // Se não houver um ID de Order utilizável, tentamos
-      // atualizar pelo external_reference quando disponível.
-      let mpOrderId = notifiedId || null;
-
-      const externalReference = String(
-        body?.external_reference ||
-        body?.data?.external_reference ||
-        ""
-      ).trim();
-
-      let local = null;
-
-      if (mpOrderId) {
-        const byOrder = await db.query(
-          `
-          SELECT *
-          FROM pix_orders
-          WHERE mp_order_id=$1
-          LIMIT 1
-          `,
-          [mpOrderId]
-        );
-
-        if (byOrder.rowCount) {
-          local = byOrder.rows[0];
-        }
-      }
-
-      if (!local && externalReference) {
-        const byReference = await db.query(
-          `
-          SELECT *
+      const local = await db.query(
+        `
+          SELECT
+            external_reference,
+            mp_order_id,
+            plano,
+            valor,
+            email,
+            status
           FROM pix_orders
           WHERE external_reference=$1
           LIMIT 1
-          `,
-          [externalReference]
-        );
+        `,
+        [reference]
+      );
 
-        if (byReference.rowCount) {
-          local = byReference.rows[0];
-          mpOrderId = local.mp_order_id;
-        }
+      if (!local.rowCount) {
+        return res.status(404).json({
+          ok: false,
+          error: "Pagamento não encontrado."
+        });
       }
 
-      // Alguns eventos podem trazer ID de pagamento, e não da Order.
-      // Nesse caso não confiamos no payload para marcar como pago.
-      // O polling /api/pix/status continua sendo a fonte segura.
-      if (!local || !mpOrderId) {
-        console.log(
-          "Webhook recebido sem Order local identificável:",
-          body?.type || body?.action || "evento"
-        );
-        return;
+      const pedido = local.rows[0];
+
+      if (!pedido.mp_order_id) {
+        return res.status(409).json({
+          ok: false,
+          error: "Pedido ainda não está pronto para liberação."
+        });
       }
 
       const response = await fetch(
-        `https://api.mercadopago.com/v1/orders/${encodeURIComponent(mpOrderId)}`,
+        `https://api.mercadopago.com/v1/orders/${encodeURIComponent(
+          pedido.mp_order_id
+        )}`,
         {
           headers: {
             Accept: "application/json",
@@ -1398,6 +1349,206 @@ app.post(
 
       if (!response.ok) {
         console.error(
+          "Liberação: erro consultando Order:",
+          response.status,
+          JSON.stringify(data)
+        );
+
+        return res.status(502).json({
+          ok: false,
+          error: "Não foi possível confirmar o pagamento agora."
+        });
+      }
+
+      const mpReference = String(
+        data?.external_reference || ""
+      ).trim();
+
+      if (
+        mpReference &&
+        mpReference !== pedido.external_reference
+      ) {
+        return res.status(409).json({
+          ok: false,
+          error: "Referência do pagamento não confere."
+        });
+      }
+
+      const status = String(
+        data?.transactions?.payments?.[0]?.status ||
+        data?.status ||
+        pedido.status ||
+        ""
+      ).toLowerCase();
+
+      const aprovado = [
+        "approved",
+        "processed",
+        "paid"
+      ].includes(status);
+
+      await db.query(
+        `
+          UPDATE pix_orders
+          SET status=$1, updated_at=NOW()
+          WHERE external_reference=$2
+        `,
+        [status || pedido.status, reference]
+      );
+
+      if (!aprovado) {
+        return res.status(409).json({
+          ok: false,
+          status,
+          error: "Pagamento ainda não aprovado."
+        });
+      }
+
+      const accessToken = jwt.sign(
+        {
+          type: "paid_access",
+          ref: pedido.external_reference,
+          plano: pedido.plano,
+          email: pedido.email
+        },
+        JWT_SECRET,
+        { expiresIn: "15m" }
+      );
+
+      const separator =
+        CLIENT_AREA_URL.includes("?") ? "&" : "?";
+
+      const redirectUrl =
+        CLIENT_AREA_URL +
+        separator +
+        "access=" +
+        encodeURIComponent(accessToken);
+
+      return res.json({
+        ok: true,
+        status,
+        plano: pedido.plano,
+        redirect_url: redirectUrl
+      });
+
+    } catch (e) {
+      console.error(
+        "Erro liberando acesso:",
+        e
+      );
+
+      return res.status(500).json({
+        ok: false,
+        error: "Erro interno ao liberar acesso."
+      });
+    }
+  }
+);
+
+// =====================================================
+// WEBHOOK MERCADO PAGO
+// =====================================================
+
+app.post(
+  "/api/mercadopago/webhook",
+  async (req, res) => {
+    res.sendStatus(200);
+
+    try {
+      if (!MP_ACCESS_TOKEN) {
+        console.error(
+          "Webhook: MP_ACCESS_TOKEN não configurado."
+        );
+        return;
+      }
+
+      const body = req.body || {};
+
+      const notifiedId = String(
+        body?.data?.id ||
+        body?.id ||
+        req.query?.["data.id"] ||
+        ""
+      ).trim();
+
+      let mpOrderId =
+        notifiedId || null;
+
+      const externalReference = String(
+        body?.external_reference ||
+        body?.data?.external_reference ||
+        ""
+      ).trim();
+
+      let local = null;
+
+      if (mpOrderId) {
+        const byOrder =
+          await db.query(
+            `
+            SELECT *
+            FROM pix_orders
+            WHERE mp_order_id=$1
+            LIMIT 1
+            `,
+            [mpOrderId]
+          );
+
+        if (byOrder.rowCount) {
+          local =
+            byOrder.rows[0];
+        }
+      }
+
+      if (!local && externalReference) {
+        const byReference =
+          await db.query(
+            `
+            SELECT *
+            FROM pix_orders
+            WHERE external_reference=$1
+            LIMIT 1
+            `,
+            [externalReference]
+          );
+
+        if (byReference.rowCount) {
+          local =
+            byReference.rows[0];
+
+          mpOrderId =
+            local.mp_order_id;
+        }
+      }
+
+      if (!local || !mpOrderId) {
+        console.log(
+          "Webhook recebido sem Order local identificável:",
+          body?.type ||
+          body?.action ||
+          "evento"
+        );
+        return;
+      }
+
+      const response = await fetch(
+        `https://api.mercadopago.com/v1/orders/${encodeURIComponent(
+          mpOrderId
+        )}`,
+        {
+          headers: {
+            Accept: "application/json",
+            Authorization:
+              `Bearer ${MP_ACCESS_TOKEN}`
+          }
+        }
+      );
+
+      const data =
+        await response.json();
+
+      if (!response.ok) {
+        console.error(
           "Webhook: erro consultando Order:",
           response.status,
           JSON.stringify(data)
@@ -1405,11 +1556,12 @@ app.post(
         return;
       }
 
-      // Para Pix, priorizamos o status do pagamento interno.
       const paymentStatus =
-        data?.transactions?.payments?.[0]?.status;
+        data?.transactions
+          ?.payments?.[0]?.status;
 
-      const orderStatus = data?.status;
+      const orderStatus =
+        data?.status;
 
       const novoStatus = String(
         paymentStatus ||
@@ -1418,15 +1570,14 @@ app.post(
         "pending"
       );
 
-      // Confere também se a referência retornada pelo MP,
-      // quando presente, corresponde ao nosso pedido.
       const mpReference = String(
         data?.external_reference || ""
       ).trim();
 
       if (
         mpReference &&
-        mpReference !== local.external_reference
+        mpReference !==
+          local.external_reference
       ) {
         console.error(
           "Webhook: external_reference divergente."
@@ -1453,6 +1604,7 @@ app.post(
         local.external_reference,
         novoStatus
       );
+
     } catch (e) {
       console.error(
         "Erro processando webhook Mercado Pago:",
