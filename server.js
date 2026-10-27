@@ -28,6 +28,10 @@ const CLIENT_AREA_URL =
   process.env.CLIENT_AREA_URL ||
   "https://bocaecergin55-hash.github.io/Desbloqueador-steam/";
 
+const COMBO_AREA_URL =
+  process.env.COMBO_AREA_URL ||
+  "https://drive.google.com/drive/folders/1YGBBAXbd1R0afMFN1H6FM2RZkR-_sv3p?usp=drive_link";
+
 if (!DATABASE_URL) {
   console.error("ERRO: DATABASE_URL não configurado.");
   process.exit(1);
@@ -162,6 +166,11 @@ const PLANOS = {
   imperio: {
     nome: "RBX Império",
     valor: "39.90"
+  },
+
+  combo: {
+    nome: "Combo Império Steam + Retrô",
+    valor: "49.90"
   }
 };
 
@@ -1405,6 +1414,18 @@ app.post(
         });
       }
 
+      // A compra aprovada já fica registrada no mesmo e-mail usado
+      // pela área Steam. O combo entrega os dois acessos pelo Drive.
+      // Não enviar o token da área Steam para um domínio externo.
+      if (pedido.plano === "combo") {
+        return res.json({
+          ok: true,
+          status,
+          plano: pedido.plano,
+          redirect_url: COMBO_AREA_URL
+        });
+      }
+
       const accessToken = jwt.sign(
         {
           type: "paid_access",
@@ -1847,3 +1868,4 @@ async function iniciarServidor() {
 }
 
 iniciarServidor();
+
