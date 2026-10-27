@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Checkout | RBX Império</title>
+
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  font-family:Arial,Helvetica,sans-serif;
+  background:#07070a;
+  color:#fff;
+  min-height:100vh;
+}
+.topo{
+  text-align:center;
+  padding:25px 15px;
+  border-bottom:1px solid #24242c;
+  background:#0d0d12;
+}
+.logo{
+  font-size:27px;
+  font-weight:900;
+}
+.logo span{color:#8b5cf6}
+.seguro{
+  margin-top:7px;
+  color:#9ca3af;
+  font-size:13px;
+}
+.container{
+  width:min(1100px,94%);
+  margin:35px auto;
+  display:grid;
+  grid-template-columns:1fr 420px;
+  gap:25px;
+}
+.card{
+  background:#101016;
+  border:1px solid #292933;
+  border-radius:18px;
+  padding:25px;
+}
+h2{font-size:21px;margin-bottom:20px}
+label{
+  display:block;
+  color:#c7c7ce;
+  font-size:14px;
+  margin:14px 0 7px;
+}
+input{
+  width:100%;
+  padding:14px;
+  border-radius:10px;
+  border:1px solid #353540;
+  background:#09090d;
+  color:#fff;
+  outline:none;
+  font-size:15px;
+}
+input:focus{border-color:#8b5cf6}
+
+.planos{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:10px;
+  margin-bottom:22px;
+}
+.plano{
+  border:1px solid #34343e;
+  border-radius:12px;
+  padding:15px 8px;
+  text-align:center;
+  cursor:pointer;
+  background:#0a0a0e;
+  transition:.2s;
+}
+.plano:hover,.plano.ativo{
+  border-color:#8b5cf6;
+  background:#171123;
+}
+.plano strong{
+  display:block;
+  font-size:14px;
+}
+.plano span{
+  display:block;
+  color:#a78bfa;
+  font-weight:800;
+  margin-top:6px;
+}
+
+.pix{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  margin:20px 0;
+  padding:15px;
+  border:1px solid #353540;
+  border-radius:12px;
+}
+.pix-badge{
+  background:#22c55e;
+  color:#07120a;
+  font-weight:900;
+  padding:7px 10px;
+  border-radius:8px;
+}
+.btn{
+  width:100%;
+  border:0;
+  border-radius:11px;
+  padding:16px;
+  cursor:pointer;
+  background:linear-gradient(90deg,#7c3aed,#a855f7);
+  color:white;
+  font-size:16px;
+  font-weight:900;
+}
+.btn:disabled{opacity:.55;cursor:not-allowed}
+
+.resumo-linha{
+  display:flex;
+  justify-content:space-between;
+  gap:20px;
+  padding:13px 0;
+  border-bottom:1px solid #292933;
+  color:#bcbcc5;
+}
+.total{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  padding-top:20px;
+}
+.total strong:last-child{
+  color:#a78bfa;
+  font-size:26px;
+}
+
+.info{
+  margin-top:20px;
+  padding:15px;
+  background:#0a0a0e;
+  border-radius:12px;
+  color:#9ca3af;
+  font-size:13px;
+  line-height:1.55;
+}
+
+/* PIX GERADO */
+#areaPix{display:none;text-align:center}
+#qr{
+  width:230px;
+  max-width:100%;
+  background:#fff;
+  padding:10px;
+  border-radius:14px;
+  margin:15px auto;
+}
+.codigo{
+  width:100%;
+  min-height:85px;
+  resize:none;
+  background:#08080c;
+  color:#ddd;
+  border:1px solid #34343e;
+  border-radius:10px;
+  padding:12px;
+  word-break:break-all;
+}
+.status{
+  margin:15px 0;
+  padding:12px;
+  border-radius:10px;
+  background:#221b0a;
+  color:#facc15;
+}
+.aprovado{
+  background:#082615;
+  color:#4ade80;
+}
+.erro{
+  margin-top:12px;
+  color:#f87171;
+  font-size:14px;
+}
+.voltar{
+  color:#aaa;
+  text-decoration:none;
+  display:inline-block;
+  margin-top:18px;
+  font-size:13px;
+}
+
+@media(max-width:800px){
+  .container{grid-template-columns:1fr}
+  .planos{grid-template-columns:1fr}
+}
+</style>
+</head>
+
+<body>
+
+<header class="topo">
+  <div class="logo">RBX <span>IMPÉRIO</span></div>
+  <div class="seguro">🔒 Checkout seguro • Pagamento via Pix</div>
+</header>
+
+<main class="container">
+
+<section class="card" id="formCard">
+
+<h2>Finalize seu pedido</h2>
+
+<div class="planos">
+  <div class="plano ativo" data-plano="start" data-valor="12.90" data-nome="Start">
+    <strong>START</strong>
+    <span>R$ 12,90</span>
+  </div>
+
+  <div class="plano" data-plano="pro" data-valor="19.99" data-nome="Pro">
+    <strong>PRO</strong>
+    <span>R$ 19,99</span>
+  </div>
+
+  <div class="plano" data-plano="imperio" data-valor="39.90" data-nome="Império">
+    <strong>IMPÉRIO</strong>
+    <span>R$ 39,90</span>
+  </div>
+
+  <div class="plano" data-plano="combo" data-valor="49.90" data-nome="Combo Império — Steam + Retrô">
+    <strong>COMBO IMPÉRIO</strong>
+    <span>R$ 49,90</span>
+  </div>
+</div>
+
+<label>Nome</label>
+<input id="nome" placeholder="Seu nome">
+
+<label>Sobrenome</label>
+<input id="sobrenome" placeholder="Seu sobrenome">
+
+<label>E-mail</label>
+<input id="email" type="email" placeholder="seuemail@exemplo.com">
+
+<label>WhatsApp</label>
+<input id="telefone" inputmode="numeric" placeholder="(31) 99999-9999">
+
+<div class="pix">
+  <div class="pix-badge">PIX</div>
+  <div>
+    <strong>Pagamento via Pix</strong><br>
+    <small style="color:#999">QR Code e Pix Copia e Cola</small>
+  </div>
+</div>
+
+<button class="btn" id="gerarPix">GERAR PIX • R$ 12,90</button>
+
+<div class="erro" id="erro"></div>
+
+</section>
+
+<section class="card">
+
+<div id="resumo">
+  <h2>Resumo do pedido</h2>
+
+  <div class="resumo-linha">
+    <span>Produto</span>
+    <strong>RBX Império</strong>
+  </div>
+
+  <div class="resumo-linha">
+    <span>Plano</span>
+    <strong id="resumoPlano">Start</strong>
+  </div>
+
+  <div class="resumo-linha">
+    <span>Pagamento</span>
+    <strong>Pix</strong>
+  </div>
+
+  <div class="total">
+    <strong>Total</strong>
+    <strong id="resumoValor">R$ 12,90</strong>
+  </div>
+
+  <div class="info">
+    Após gerar o Pix, faça o pagamento pelo aplicativo do seu banco.
+    A página verificará automaticamente o status da transação.
+  </div>
+</div>
+
+<div id="areaPix">
+
+  <h2>Seu Pix está pronto</h2>
+
+  <p style="color:#aaa">
+    Escaneie o QR Code ou copie o código abaixo.
+  </p>
+
+  <img id="qr" alt="QR Code Pix">
+
+  <textarea id="codigoPix" class="codigo" readonly></textarea>
+
+  <button class="btn" id="copiarPix" style="margin-top:12px">
+    COPIAR PIX
+  </button>
+
+  <div class="status" id="status">
+    ⏳ Aguardando pagamento...
+  </div>
+
+  <small style="color:#888">
+    A confirmação pode levar alguns segundos.
+  </small>
+
+</div>
+
+<a class="voltar" href="./">← Voltar para o site</a>
+
+</section>
+
+</main>
+
+<script>
+const API = "https://rbx-imperio-key-server.onrender.com";
+
+let plano = "start";
+let valor = "12.90";
+let nomePlano = "Start";
+let referenciaAtual = null;
+let timerStatus = null;
+
+const planos = document.querySelectorAll(".plano");
+const botao = document.getElementById("gerarPix");
+const erro = document.getElementById("erro");
+
+function dinheiro(v){
+  return Number(v).toLocaleString("pt-BR",{
+    style:"currency",
+    currency:"BRL"
+  });
+}
+
+function selecionarPlano(el){
+  planos.forEach(p=>p.classList.remove("ativo"));
+  el.classList.add("ativo");
+
+  plano = el.dataset.plano;
+  valor = el.dataset.valor;
+  nomePlano = el.dataset.nome;
+
+  document.getElementById("resumoPlano").textContent = nomePlano;
+  document.getElementById("resumoValor").textContent = dinheiro(valor);
+  botao.textContent = "GERAR PIX • " + dinheiro(valor);
+}
+
+planos.forEach(el=>{
+  el.addEventListener("click",()=>selecionarPlano(el));
+});
+
+/* Permite abrir:
+   checkout.html?plano=pro
+   checkout.html?plano=imperio
+*/
+const parametro = new URLSearchParams(location.search).get("plano");
+
+if(parametro){
+  const encontrado = document.querySelector(
+    `.plano[data-plano="${parametro}"]`
+  );
+
+  if(encontrado) selecionarPlano(encontrado);
+}
+
+botao.addEventListener("click", async ()=>{
+
+  erro.textContent = "";
+
+  const nome = document.getElementById("nome").value.trim();
+  const sobrenome = document.getElementById("sobrenome").value.trim();
+  const email = document.getElementById("email").value.trim();
+  const telefone = document.getElementById("telefone").value.trim();
+
+  if(!nome || !sobrenome || !email){
+    erro.textContent = "Preencha nome, sobrenome e e-mail.";
+    return;
+  }
+
+  botao.disabled = true;
+  botao.textContent = "GERANDO PIX...";
+
+  try{
+
+    const resposta = await fetch(API + "/api/pix/criar",{
+      method:"POST",
+      headers:{
+        "Content-Type":"application/json"
+      },
+      body:JSON.stringify({
+        plano,
+        nome,
+        sobrenome,
+        email,
+        telefone
+      })
+    });
+
+    const data = await resposta.json();
+
+    if(!resposta.ok || !data.ok){
+      throw new Error(data.error || "Não foi possível gerar o Pix.");
+    }
+
+    if(!data.qr_code || !data.qr_code_base64){
+      throw new Error("O Mercado Pago não retornou o QR Code.");
+    }
+
+    referenciaAtual = data.external_reference;
+
+    document.getElementById("codigoPix").value = data.qr_code;
+
+    let imagem = data.qr_code_base64;
+
+    if(!imagem.startsWith("data:image")){
+      imagem = "data:image/png;base64," + imagem;
+    }
+
+    document.getElementById("qr").src = imagem;
+
+    document.getElementById("resumo").style.display = "none";
+    document.getElementById("areaPix").style.display = "block";
+
+    iniciarConsulta();
+
+  }catch(e){
+    erro.textContent = e.message;
+  }finally{
+    botao.disabled = false;
+    botao.textContent = "GERAR PIX • " + dinheiro(valor);
+  }
+});
+
+document.getElementById("copiarPix").addEventListener("click", async ()=>{
+  const codigo = document.getElementById("codigoPix").value;
+
+  try{
+    await navigator.clipboard.writeText(codigo);
+
+    const b = document.getElementById("copiarPix");
+    const antigo = b.textContent;
+
+    b.textContent = "✓ PIX COPIADO";
+
+    setTimeout(()=>{
+      b.textContent = antigo;
+    },1800);
+
+  }catch{
+    document.getElementById("codigoPix").select();
+    document.execCommand("copy");
+  }
+});
+
+function iniciarConsulta(){
+
+  if(timerStatus) clearInterval(timerStatus);
+
+  consultarStatus();
+
+  timerStatus = setInterval(consultarStatus,5000);
+}
+
+async function consultarStatus(){
+
+  if(!referenciaAtual) return;
+
+  try{
+
+    const resposta = await fetch(
+      API + "/api/pix/status/" +
+      encodeURIComponent(referenciaAtual)
+    );
+
+    const data = await resposta.json();
+
+    if(!data.ok) return;
+
+    const status = String(data.status || "").toLowerCase();
+    const box = document.getElementById("status");
+
+    if(
+      status === "approved" ||
+      status === "processed" ||
+      status === "paid"
+    ){
+      box.className = "status aprovado";
+      box.textContent = "✓ Pagamento aprovado! Liberando seu acesso...";
+
+      clearInterval(timerStatus);
+
+      try{
+        const liberar = await fetch(
+          API + "/api/pix/liberar/" +
+          encodeURIComponent(referenciaAtual),
+          { method:"POST" }
+        );
+
+        const acesso = await liberar.json();
+
+        if(!liberar.ok || !acesso.ok || !acesso.redirect_url){
+          throw new Error(
+            acesso.error || "Não foi possível liberar o acesso."
+          );
+        }
+
+        box.textContent = acesso.plano === "combo"
+          ? "✓ Pagamento aprovado! Abrindo seu Combo Império no Drive..."
+          : "✓ Pagamento aprovado! Entrando na Área do Cliente...";
+
+        setTimeout(()=>{
+          window.location.href = acesso.redirect_url;
+        },1800);
+
+      }catch(e){
+        box.className = "status erro";
+        box.textContent =
+          "Pagamento aprovado, mas houve um erro ao abrir seu acesso. Atualize a página para tentar novamente.";
+        console.error(e);
+      }
+    }
+
+  }catch(e){
+    console.log("Aguardando nova consulta...");
+  }
+}
+</script>
+
+</body>
+</html>
+
