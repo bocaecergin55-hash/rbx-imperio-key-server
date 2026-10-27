@@ -32,6 +32,10 @@ const COMBO_AREA_URL =
   process.env.COMBO_AREA_URL ||
   "https://drive.google.com/drive/folders/1YGBBAXbd1R0afMFN1H6FM2RZkR-_sv3p?usp=drive_link";
 
+const RETRO_AREA_URL =
+  process.env.RETRO_AREA_URL ||
+  "https://uploadnow.io/pt/share?utm_source=8B7W2Ps";
+
 if (!DATABASE_URL) {
   console.error("ERRO: DATABASE_URL não configurado.");
   process.exit(1);
@@ -171,6 +175,11 @@ const PLANOS = {
   combo: {
     nome: "Combo Império Steam + Retrô",
     valor: "49.90"
+  },
+
+  retro: {
+    nome: "RBX Império Retrô",
+    valor: "14.90"
   }
 };
 
@@ -1417,12 +1426,12 @@ app.post(
       // A compra aprovada já fica registrada no mesmo e-mail usado
       // pela área Steam. O combo entrega os dois acessos pelo Drive.
       // Não enviar o token da área Steam para um domínio externo.
-      if (pedido.plano === "combo") {
+      if (pedido.plano === "combo" || pedido.plano === "retro") {
         return res.json({
           ok: true,
           status,
           plano: pedido.plano,
-          redirect_url: COMBO_AREA_URL
+          redirect_url: pedido.plano === "retro" ? RETRO_AREA_URL : COMBO_AREA_URL
         });
       }
 
@@ -1503,6 +1512,7 @@ app.post(
         FROM pix_orders
         WHERE
           lower(email)=lower($1)
+          AND plano IN ('start', 'pro', 'imperio', 'combo')
           AND lower(status) IN (
             'approved',
             'processed',
@@ -1615,6 +1625,7 @@ app.post(
         WHERE
           external_reference=$1
           AND lower(email)=lower($2)
+          AND plano IN ('start', 'pro', 'imperio', 'combo')
           AND lower(status) IN (
             'approved',
             'processed',
@@ -1868,4 +1879,5 @@ async function iniciarServidor() {
 }
 
 iniciarServidor();
+
 
