@@ -159,22 +159,22 @@ const pixLimiter = rateLimit({
 const PLANOS = {
   start: {
     nome: "RBX Império Start",
-    valor: "12.90"
+    valor: "5.00"
   },
 
   pro: {
     nome: "RBX Império Pro",
-    valor: "19.99"
+    valor: "10.00"
   },
 
   imperio: {
     nome: "RBX Império",
-    valor: "39.90"
+    valor: "20.00"
   },
 
   combo: {
     nome: "Combo Império Steam + Retrô",
-    valor: "49.90"
+    valor: "30.00"
   },
 
   retro: {
