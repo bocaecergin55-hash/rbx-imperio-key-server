@@ -183,6 +183,15 @@ const PLANOS = {
   }
 };
 
+// Oferta assinada pelo servidor: cinco minutos para gerar o Pix de R$ 25.
+// O plano armazenado continua sendo combo para preservar a entrega e o acesso.
+app.get("/api/oferta-combo", pixLimiter, (req, res) => {
+  const token = jwt.sign({ type: "combo_offer", plano: "combo", valor: "25.00" }, JWT_SECRET, { expiresIn: "5m" });
+  const payload = jwt.decode(token);
+  res.setHeader("Cache-Control", "no-store");
+  res.json({ ok: true, token, expiresAt: payload.exp * 1000 });
+});
+
 // =====================================================
 // FUNÇÕES
 // =====================================================
@@ -881,8 +890,16 @@ app.post(
         req.body?.telefone || ""
       ).trim();
 
-      const plano =
-        PLANOS[planoCodigo];
+      let plano = PLANOS[planoCodigo];
+      if (req.body?.oferta_token) {
+        try {
+          const offer = jwt.verify(String(req.body.oferta_token), JWT_SECRET);
+          if (offer.type !== "combo_offer" || offer.plano !== "combo" || offer.valor !== "25.00" || planoCodigo !== "combo") throw new Error("Oferta inválida");
+          plano = { ...PLANOS.combo, valor: "25.00" };
+        } catch {
+          return res.status(409).json({ ok: false, error: "O prazo da oferta terminou. Volte aos planos para escolher o Combo pelo valor normal." });
+        }
+      }
 
       if (!plano) {
         return res.status(400).json({
