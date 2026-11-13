@@ -158,23 +158,23 @@ const pixLimiter = rateLimit({
 
 const PLANOS = {
   start: {
-    nome: "RBX Império Start",
-    valor: "5.00"
+    nome: "RBX Império Básico",
+    valor: "14.90"
   },
 
   pro: {
     nome: "RBX Império Pro",
-    valor: "10.00"
+    valor: "19.90"
   },
 
   imperio: {
     nome: "RBX Império",
-    valor: "20.00"
+    valor: "34.90"
   },
 
   combo: {
     nome: "Combo Império Steam + Retrô",
-    valor: "30.00"
+    valor: "34.90"
   },
 
   retro: {
@@ -186,10 +186,8 @@ const PLANOS = {
 // Oferta assinada pelo servidor: cinco minutos para gerar o Pix de R$ 25.
 // O plano armazenado continua sendo combo para preservar a entrega e o acesso.
 app.get("/api/oferta-combo", pixLimiter, (req, res) => {
-  const token = jwt.sign({ type: "combo_offer", plano: "combo", valor: "25.00" }, JWT_SECRET, { expiresIn: "5m" });
-  const payload = jwt.decode(token);
   res.setHeader("Cache-Control", "no-store");
-  res.json({ ok: true, token, expiresAt: payload.exp * 1000 });
+  return res.status(410).json({ ok: false, error: "Oferta encerrada. O Plano Império com RBX Retrô de brinde custa R$ 34,90." });
 });
 
 // =====================================================
@@ -1443,7 +1441,7 @@ app.post(
       // A compra aprovada já fica registrada no mesmo e-mail usado
       // pela área Steam. O combo entrega os dois acessos pelo Drive.
       // Não enviar o token da área Steam para um domínio externo.
-      if (pedido.plano === "combo" || pedido.plano === "retro") {
+      if (pedido.plano === "combo" || pedido.plano === "retro" || pedido.plano === "imperio") {
         return res.json({
           ok: true,
           status,
@@ -1896,5 +1894,6 @@ async function iniciarServidor() {
 }
 
 iniciarServidor();
+
 
 
